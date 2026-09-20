@@ -21,6 +21,7 @@ export interface TopBarCallbacks {
   onRegenerate: () => void;
   onOpenModelPicker: () => void;
   onRegenerateWholeSite: () => void;
+  onOpenDebug: () => void;
 }
 
 export class TopBar {
@@ -91,9 +92,17 @@ export class TopBar {
           </button>
         </div>
 
-        <!-- Center: Jev Reflex Status Badge -->
+        <!-- Center: Jev Reflex Status Badge (Click to open deep telemetry modal) -->
         <div class="hidden lg:flex items-center space-x-3">
-          ${jevBadgeHtml}
+          <button
+            id="topbar-debug-btn"
+            type="button"
+            class="flex items-center space-x-2 px-3 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-750 active:scale-95 text-slate-200 border border-slate-700/80 hover:border-indigo-500/50 text-xs font-mono transition cursor-pointer group"
+            title="Click to view deep telemetry timeline, Jev questions & token usage"
+          >
+            ${jevBadgeHtml}
+            <span class="text-[10px] text-indigo-400 font-sans group-hover:underline font-medium">Telemetry 🔍</span>
+          </button>
         </div>
 
         <!-- Right: Controls (Undo/Redo, Model, Export, Settings) -->
@@ -175,6 +184,7 @@ export class TopBar {
     const settingsBtn = this.container.querySelector("#btn-topbar-settings");
     const modelPickerBtn = this.container.querySelector("#topbar-model-picker-btn");
     const regenerateSiteBtn = this.container.querySelector("#btn-regenerate-site");
+    const debugBtn = this.container.querySelector("#topbar-debug-btn");
 
     logoBtn?.addEventListener("click", () => this.callbacks.onGoHome());
     promptPill?.addEventListener("click", () => this.callbacks.onRegenerate());
@@ -184,5 +194,6 @@ export class TopBar {
     settingsBtn?.addEventListener("click", () => this.callbacks.onOpenSettings());
     modelPickerBtn?.addEventListener("click", () => this.callbacks.onOpenModelPicker());
     regenerateSiteBtn?.addEventListener("click", () => this.callbacks.onRegenerateWholeSite());
+    debugBtn?.addEventListener("click", () => this.callbacks.onOpenDebug());
   }
 }

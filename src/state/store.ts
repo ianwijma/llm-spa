@@ -85,6 +85,18 @@ export interface HistoryEntry {
   domSnapshot: string;
 }
 
+export interface TelemetryEvent {
+  id: string;
+  timestamp: number;
+  type: "preflight" | "ui_event" | "reflex_routing" | "generation" | "dom_patch" | "undo_redo" | "regenerate";
+  title: string;
+  latencyMs?: number;
+  tokens?: number;
+  model?: string;
+  summary: string;
+  details: Record<string, any>;
+}
+
 export interface AppState {
   currentView: "landing" | "runtime";
   prompt: string;
@@ -106,6 +118,9 @@ export interface AppState {
   settingsOpen: boolean;
   availableModels: OpenRouterModel[];
   isModelPickerOpen: boolean;
+  telemetryEvents: TelemetryEvent[];
+  debugModalOpen: boolean;
+  totalTokensUsed: number;
 }
 
 type Listener = (state: AppState) => void;
@@ -146,6 +161,9 @@ const initialState: AppState = {
   settingsOpen: false,
   availableModels: POPULAR_MODELS,
   isModelPickerOpen: false,
+  telemetryEvents: [],
+  debugModalOpen: false,
+  totalTokensUsed: 0,
 };
 
 class Store {
@@ -236,6 +254,24 @@ class Store {
       currentHtml: entry.domSnapshot,
     });
     return entry;
+  }
+
+  public recordTelemetry(event: Omit<TelemetryEvent, "id" | "timestamp">): void {
+    const entry: TelemetryEvent = {
+      ...event,
+      id: `tel-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      timestamp: Date.now(),
+    };
+    const current = this.state.telemetryEvents || [];
+    const addedTokens = event.tokens || 0;
+    this.setState({
+      telemetryEvents: [entry, ...current],
+      totalTokensUsed: (this.state.totalTokensUsed || 0) + addedTokens,
+    });
+  }
+
+  public clearTelemetry(): void {
+    this.setState({ telemetryEvents: [], totalTokensUsed: 0 });
   }
 }
 

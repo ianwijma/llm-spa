@@ -9,6 +9,7 @@ import { LandingView } from "./components/landingView";
 import { TopBar } from "./components/topBar";
 import { SettingsModal } from "./components/settingsModal";
 import { ModelPicker } from "./components/modelPicker";
+import { DebugModal } from "./components/debugModal";
 import { IframeSandbox } from "./runtime/iframeSandbox";
 import { StreamProcessor } from "./runtime/streamProcessor";
 import { runJevPreflight, runJevReflex, type InteractionPayload, type SiteContext } from "./services/typesafe";
@@ -28,11 +29,13 @@ class HyperSiteApp {
   private statusOverlay!: HTMLElement;
   private modalContainer!: HTMLElement;
   private modelPickerContainer!: HTMLElement;
+  private debugModalContainer!: HTMLElement;
 
   private landingView!: LandingView;
   private topBar!: TopBar;
   private settingsModal!: SettingsModal;
   private modelPicker!: ModelPicker;
+  private debugModal!: DebugModal;
   private sandbox!: IframeSandbox;
   private streamProcessor!: StreamProcessor;
 
@@ -44,6 +47,7 @@ class HyperSiteApp {
     this.statusOverlay = document.getElementById("status-overlay")!;
     this.modalContainer = document.getElementById("modal-container")!;
     this.modelPickerContainer = document.getElementById("model-picker-container")!;
+    this.debugModalContainer = document.getElementById("debug-modal-container")!;
 
     // Initialize Components
     this.landingView = new LandingView(this.landingContainer, {
@@ -61,6 +65,7 @@ class HyperSiteApp {
       onRegenerate: () => this.handleRegeneratePrompt(),
       onOpenModelPicker: () => this.openModelPicker(),
       onRegenerateWholeSite: () => this.handleRegenerateWholeSite(),
+      onOpenDebug: () => this.openDebugModal(),
     });
 
     this.settingsModal = new SettingsModal(this.modalContainer, {
@@ -70,6 +75,10 @@ class HyperSiteApp {
     this.modelPicker = new ModelPicker(this.modelPickerContainer, {
       onSelect: (modelId) => this.handleSelectModel(modelId),
       onClose: () => this.closeModelPicker(),
+    });
+
+    this.debugModal = new DebugModal(this.debugModalContainer, {
+      onClose: () => this.closeDebugModal(),
     });
 
     this.sandbox = new IframeSandbox(this.iframeContainer);
@@ -94,6 +103,11 @@ class HyperSiteApp {
       } else {
         this.modelPickerContainer.innerHTML = "";
       }
+      if (state.debugModalOpen) {
+        this.debugModal.render();
+      } else {
+        this.debugModalContainer.innerHTML = "";
+      }
     });
 
     // Fetch full 400+ model catalog in background
@@ -115,7 +129,9 @@ class HyperSiteApp {
         e.preventDefault();
         this.handleRedo();
       } else if (e.key === "Escape") {
-        if (store.getState().isModelPickerOpen) {
+        if (store.getState().debugModalOpen) {
+          this.closeDebugModal();
+        } else if (store.getState().isModelPickerOpen) {
           this.closeModelPicker();
         } else if (store.getState().settingsOpen) {
           this.closeSettings();
@@ -125,6 +141,16 @@ class HyperSiteApp {
 
     // Initial render
     this.landingView.render();
+  }
+
+  private openDebugModal(): void {
+    store.setState({ debugModalOpen: true });
+    this.debugModal.render();
+  }
+
+  private closeDebugModal(): void {
+    store.setState({ debugModalOpen: false });
+    this.debugModalContainer.innerHTML = "";
   }
 
   private openModelPicker(): void {
@@ -187,6 +213,22 @@ class HyperSiteApp {
       const jevResult = await runJevPreflight(trimmed);
       store.setState({ jevPreflight: jevResult });
 
+      store.recordTelemetry({
+        type: "preflight",
+        title: `TypeSafe Jev Pre-Flight: ${jevResult.archetype} / ${jevResult.theme}`,
+        latencyMs: jevResult.latencyMs,
+        summary: `Prompt classified into ${jevResult.archetype} (${jevResult.theme}, ${jevResult.complexity}) in ${jevResult.latencyMs}ms with ${Math.round(jevResult.confidence * 100)}% confidence`,
+        details: {
+          userPrompt: trimmed,
+          archetype: jevResult.archetype,
+          theme: jevResult.theme,
+          complexity: jevResult.complexity,
+          constructiveScore: jevResult.constructiveScore,
+          confidence: jevResult.confidence,
+          latencyMs: jevResult.latencyMs,
+        },
+      });
+
       this.showStatusOverlay(
         `⚡ Jev (${jevResult.latencyMs}ms): ${jevResult.archetype} • ${jevResult.theme} • ${jevResult.complexity}`,
         false
@@ -214,6 +256,22 @@ class HyperSiteApp {
         onComplete: (fullHtml) => {
           this.streamProcessor.finalize();
           const designSystem = extractDesignSystemFromHtml(fullHtml, trimmed, jevResult);
+          const estTokens = Math.max(1, Math.round(fullHtml.length / 4));
+
+          store.recordTelemetry({
+            type: "generation",
+            title: `OpenRouter Synthesis: ${state.selectedModel}`,
+            tokens: estTokens,
+            model: state.selectedModel,
+            summary: `Synthesized initial page (${estTokens.toLocaleString()} tokens, ${fullHtml.length} chars) using ${state.selectedModel}`,
+            details: {
+              model: state.selectedModel,
+              estimatedTokens: estTokens,
+              characterCount: fullHtml.length,
+              lockedDesignSystem: designSystem,
+            },
+          });
+
           store.setState((prev) => ({
             isGenerating: false,
             currentHtml: fullHtml,
@@ -248,6 +306,25 @@ class HyperSiteApp {
     const state = store.getState();
     store.setState({ isReflexEvaluating: true });
 
+    // Record UI event in telemetry timeline
+    store.recordTelemetry({
+      type: "ui_event",
+      title: `UI Interaction: ${event.eventType.toUpperCase()} <${event.tagName.toLowerCase()}>`,
+      summary: `Target: "${event.text || event.id || event.tagName}" (Action: ${event.action || "none"}, Target: ${event.target || "none"})`,
+      details: {
+        eventType: event.eventType,
+        tagName: event.tagName,
+        id: event.id,
+        className: event.className,
+        text: event.text,
+        action: event.action,
+        target: event.target,
+        href: event.href,
+        formData: event.formData,
+        contextSnippet: event.contextSnippet,
+      },
+    });
+
     const siteContext: SiteContext = {
       originalGoal: state.prompt,
       activePage: state.session.currentRoute,
@@ -261,6 +338,22 @@ class HyperSiteApp {
       store.setState({
         lastReflexDecision: reflex,
         isReflexEvaluating: false,
+      });
+
+      // Record Jev reflex decision
+      store.recordTelemetry({
+        type: "reflex_routing",
+        title: `TypeSafe Jev Reflex: ${reflex.actionPathway}`,
+        latencyMs: reflex.latencyMs,
+        summary: `Pathway: ${reflex.actionPathway} -> ${reflex.targetSelector} (Intent: ${reflex.mutationIntent}, Confidence: ${Math.round(reflex.confidence * 100)}%)`,
+        details: {
+          actionPathway: reflex.actionPathway,
+          targetSelector: reflex.targetSelector,
+          mutationIntent: reflex.mutationIntent,
+          latencyMs: reflex.latencyMs,
+          confidence: reflex.confidence,
+          siteContext,
+        },
       });
 
       this.showStatusOverlay(
@@ -281,10 +374,25 @@ class HyperSiteApp {
                 session: { ...prev.session, currentRoute: "#/" },
               }));
               store.pushHistory("Navigate: Home", first.domSnapshot);
+              store.recordTelemetry({
+                type: "dom_patch",
+                title: "Restored Homepage Snapshot",
+                summary: "Replaced view with initial homepage snapshot",
+                details: { route: "#/" },
+              });
               this.showStatusOverlay("Returned to Homepage", false, 1500);
             }
           } else {
             this.sandbox.toggleClass(reflex.targetSelector, "hidden");
+            store.recordTelemetry({
+              type: "dom_patch",
+              title: `Class Toggle: ${reflex.targetSelector}`,
+              summary: `Toggled "hidden" class on selector "${reflex.targetSelector}"`,
+              details: {
+                selector: reflex.targetSelector,
+                actionPathway: "local_toggle",
+              },
+            });
           }
           break;
         }
@@ -323,6 +431,20 @@ class HyperSiteApp {
             sessionContext: store.getState().session.persistedData,
           });
 
+          const patchTokens = Math.max(1, Math.round(patchHtml.length / 4));
+          store.recordTelemetry({
+            type: "dom_patch",
+            title: `Surgical DOM Patch: ${reflex.targetSelector}`,
+            tokens: patchTokens,
+            summary: `Replaced ${reflex.targetSelector} with ~${patchTokens} tokens of updated HTML`,
+            details: {
+              selector: reflex.targetSelector,
+              mutationIntent: reflex.mutationIntent,
+              patchHtmlSnippet: patchHtml.slice(0, 300),
+              estimatedTokens: patchTokens,
+            },
+          });
+
           this.sandbox.patchElement(reflex.targetSelector, patchHtml);
           store.pushHistory(`Patch: ${reflex.mutationIntent}`, state.currentHtml);
           this.hideStatusOverlay();
@@ -346,6 +468,12 @@ class HyperSiteApp {
             </div>
           `;
           this.sandbox.patchElement(reflex.targetSelector, banner);
+          store.recordTelemetry({
+            type: "dom_patch",
+            title: "Form Submission Feedback",
+            summary: "Mounted success confirmation banner",
+            details: { selector: reflex.targetSelector },
+          });
           store.pushHistory("Form Submission", state.currentHtml);
           break;
         }
@@ -371,6 +499,12 @@ class HyperSiteApp {
     const entry = store.undo();
     if (entry) {
       this.sandbox.replaceRootHtml(entry.domSnapshot);
+      store.recordTelemetry({
+        type: "undo_redo",
+        title: "Undo Action",
+        summary: `Rolled back to snapshot: "${entry.actionDescription}"`,
+        details: { action: entry.actionDescription, timestamp: entry.timestamp },
+      });
       this.showStatusOverlay(`↶ Undo: ${entry.actionDescription}`, false, 1500);
     }
   }
@@ -379,6 +513,12 @@ class HyperSiteApp {
     const entry = store.redo();
     if (entry) {
       this.sandbox.replaceRootHtml(entry.domSnapshot);
+      store.recordTelemetry({
+        type: "undo_redo",
+        title: "Redo Action",
+        summary: `Advanced forward to snapshot: "${entry.actionDescription}"`,
+        details: { action: entry.actionDescription, timestamp: entry.timestamp },
+      });
       this.showStatusOverlay(`↷ Redo: ${entry.actionDescription}`, false, 1500);
     }
   }
@@ -425,6 +565,23 @@ class HyperSiteApp {
       },
       onComplete: (newPageHtml) => {
         this.streamProcessor.finalize();
+        const tokens = Math.max(1, Math.round(newPageHtml.length / 4));
+        store.recordTelemetry({
+          type: "generation",
+          title: `Page Transition: ${targetIntent.replace("_", " ")}`,
+          tokens,
+          model: state.selectedModel,
+          summary: `Transitioned to "${targetIntent.replace("_", " ")}" (~${tokens} tokens) preserving ${ds.brandName} design system & layout shell`,
+          details: {
+            targetIntent,
+            route: newRoute,
+            brandName: ds.brandName,
+            theme: ds.theme,
+            model: state.selectedModel,
+            tokens,
+          },
+        });
+
         store.setState((prev) => ({
           isGenerating: false,
           currentHtml: newPageHtml,
@@ -446,6 +603,13 @@ class HyperSiteApp {
   private async handleRegenerateWholeSite(): Promise<void> {
     const prompt = store.getState().prompt;
     if (!prompt) return;
+
+    store.recordTelemetry({
+      type: "regenerate",
+      title: "Whole Site Redesign Requested",
+      summary: `Cleared locked design system to synthesize fresh layout from scratch for prompt: "${prompt.slice(0, 40)}"`,
+      details: { prompt },
+    });
 
     this.showStatusOverlay("🔄 Redesigning entire website from scratch...", true);
     // Reset locked design system so a fresh design is synthesized
