@@ -5,7 +5,7 @@
 
 import { OpenRouter } from "@openrouter/sdk";
 import { getStoredOpenRouterKey, getStoredDemoMode } from "../state/storage";
-import type { JevPreflightResult } from "../state/store";
+import type { JevPreflightResult, LockedDesignSystem } from "../state/store";
 
 export interface OpenRouterModel {
   id: string;              // model slug / identifier (e.g., "anthropic/claude-3.5-sonnet")
@@ -359,6 +359,365 @@ Generate the complete, fully formed HTML body content following all rules.
     }
     options.onError(new Error(message));
   }
+}
+
+/**
+ * Extracts and locks the design system, header, footer, and styling tokens from generated HTML
+ */
+export function extractDesignSystemFromHtml(
+  html: string,
+  _prompt: string,
+  jev?: JevPreflightResult | null
+): LockedDesignSystem {
+  const Parser =
+    typeof DOMParser !== "undefined"
+      ? DOMParser
+      : typeof window !== "undefined"
+      ? window.DOMParser
+      : null;
+
+  let doc: Document | null = null;
+  if (Parser) {
+    try {
+      const parser = new Parser();
+      doc = parser.parseFromString(html, "text/html");
+    } catch {}
+  }
+
+  // 1. Extract Header & Footer HTML via DOM or Regex fallback
+  let headerHtml = "";
+  let footerHtml = "";
+  let brandName = "HyperSite";
+  let brandIcon = "⚡";
+  let wrapperClasses = "min-h-screen bg-slate-50 text-slate-900 font-sans";
+  let primaryButtonClass = "px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium";
+  let cardClass = "bg-white rounded-2xl border border-slate-200 p-6 shadow-sm";
+
+  if (doc) {
+    const headerEl = doc.querySelector("header, nav");
+    headerHtml = headerEl ? headerEl.outerHTML : "";
+    const footerEl = doc.querySelector("footer");
+    footerHtml = footerEl ? footerEl.outerHTML : "";
+
+    if (headerEl) {
+      const candidates = headerEl.querySelectorAll("h1, h2, span.font-bold, span.font-black, span.text-xl, a");
+      for (const el of candidates) {
+        const text = el.textContent?.trim() || "";
+        if (text.length > 2 && !text.toLowerCase().includes("cart") && !text.toLowerCase().includes("basket") && !text.toLowerCase().includes("order")) {
+          brandName = text;
+          break;
+        }
+      }
+      const iconEl = headerEl.querySelector("div.w-10, div.w-9, div.w-8, span.text-2xl, span.text-lg, span.text-xl");
+      if (iconEl && iconEl.textContent) {
+        brandIcon = iconEl.textContent.trim().slice(0, 4);
+      }
+    }
+
+    const rootDiv = doc.querySelector("div");
+    if (rootDiv && rootDiv.getAttribute("class")) {
+      wrapperClasses = rootDiv.getAttribute("class") || wrapperClasses;
+    }
+
+    const primaryBtn = doc.querySelector(
+      "button[data-action*='add'], button[data-action*='order'], button[data-action*='checkout'], button.bg-indigo-600, button.bg-emerald-900, button.bg-cyan-500, main button"
+    );
+    if (primaryBtn && primaryBtn.getAttribute("class")) {
+      primaryButtonClass = primaryBtn.getAttribute("class") || primaryButtonClass;
+    }
+
+    const cardEl = doc.querySelector("div[id*='card'], div[id*='item'], div.rounded-2xl, div.rounded-3xl");
+    if (cardEl && cardEl.getAttribute("class")) {
+      cardClass = cardEl.getAttribute("class") || cardClass;
+    }
+  } else {
+    // Regex fallback for non-DOM environments
+    const headerMatch = html.match(/<header[\s\S]*?<\/header>/i);
+    headerHtml = headerMatch ? headerMatch[0] : "";
+    const brandMatch = html.match(/class=["\'][^"\']*font-bold[^"\']*["\']>([^<]+)<\//i);
+    if (brandMatch) brandName = brandMatch[1].trim();
+    const wrapperMatch = html.match(/<div[^>]*class=["\']([^"\']+)["\']/i);
+    if (wrapperMatch) wrapperClasses = wrapperMatch[1];
+    const btnMatch = html.match(/<button[^>]*class=["\']([^"\']+)["\']/i);
+    if (btnMatch) primaryButtonClass = btnMatch[1];
+  }
+
+  const archetype = jev?.archetype || "ecommerce";
+  const theme = jev?.theme || "modern_saas";
+
+  return {
+    brandName,
+    brandIcon,
+    archetype,
+    theme,
+    headerHtml,
+    footerHtml,
+    wrapperClasses,
+    colorScheme: {
+      backgroundClass: wrapperClasses.split(" ").find((c) => c.startsWith("bg-")) || "bg-slate-50",
+      textClass: wrapperClasses.split(" ").find((c) => c.startsWith("text-")) || "text-slate-900",
+      primaryButtonClass,
+      secondaryButtonClass: "px-5 py-2.5 bg-white border border-slate-200 text-slate-800 rounded-xl",
+      cardClass,
+      fontFamilyClass: wrapperClasses.includes("font-serif")
+        ? "font-serif"
+        : wrapperClasses.includes("font-mono")
+        ? "font-mono"
+        : "font-sans",
+    },
+  };
+}
+
+export interface PageTransitionOptions {
+  model: string;
+  targetPage: string;
+  intent: string;
+  lockedDesignSystem: LockedDesignSystem;
+  sessionContext?: Record<string, any>;
+  onToken: (token: string) => void;
+  onComplete: (fullHtml: string) => void;
+  onError: (err: Error) => void;
+}
+
+/**
+ * Reuses locked design system, header, and styling to generate consistent follow-up pages
+ */
+export async function streamPageTransition(options: PageTransitionOptions): Promise<void> {
+  const apiKey = getStoredOpenRouterKey();
+  const isDemo = getStoredDemoMode() || !apiKey;
+
+  if (isDemo) {
+    const mockTransition = generateTransitionMockHtml(
+      options.lockedDesignSystem,
+      options.intent,
+      options.sessionContext
+    );
+    const chunkSize = 35;
+    let accumulated = "";
+    for (let i = 0; i < mockTransition.length; i += chunkSize) {
+      const chunk = mockTransition.slice(i, i + chunkSize);
+      accumulated += chunk;
+      options.onToken(chunk);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    options.onComplete(accumulated);
+    return;
+  }
+
+  const client = createOpenRouterClient();
+  const ds = options.lockedDesignSystem;
+
+  const prompt = `
+Generate the <main id="page-content"> for page: "${options.targetPage}".
+Intent: ${options.intent}
+
+STRICT DESIGN SYSTEM LOCK (DO NOT DEVIATE):
+- Brand Name: ${ds.brandName}
+- Visual Theme: ${ds.theme}
+- Primary Button Styling: ${ds.colorScheme.primaryButtonClass}
+- Card Styling: ${ds.colorScheme.cardClass}
+- Typography / Font Family: ${ds.colorScheme.fontFamilyClass}
+
+Session Context Data:
+${JSON.stringify(options.sessionContext, null, 2)}
+
+Instructions:
+1. Generate ONLY the <main id="page-content">...</main> HTML block.
+2. DO NOT output <header> or <footer> (they are already locked and persisted by the host container).
+3. Match the visual aesthetic, color palette, button shapes, and typography exactly.
+4. Output raw HTML only, no markdown wrappers (\`\`\`html).
+`;
+
+  try {
+    const responseStream = await client.chat.send({
+      chatRequest: {
+        model: options.model,
+        stream: true,
+        messages: [
+          {
+            role: "system",
+            content: "You are a precise frontend UI compiler. Generate only the matching <main id=\"page-content\"> content adhering strictly to the design system.",
+          },
+          { role: "user", content: prompt },
+        ],
+      },
+    });
+
+    let mainContent = "";
+    const stream = responseStream as unknown as AsyncIterable<any>;
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta?.content;
+      if (delta) {
+        mainContent += delta;
+        options.onToken(delta);
+      }
+    }
+
+    const cleanMain = stripMarkdownFences(mainContent);
+    const assembledHtml = `
+<div class="${ds.wrapperClasses}">
+  ${ds.headerHtml}
+  ${cleanMain}
+  ${ds.footerHtml || ""}
+</div>`.trim();
+
+    options.onComplete(assembledHtml);
+  } catch (err: any) {
+    console.warn("Live page transition failed, using design-locked fallback:", err);
+    const mock = generateTransitionMockHtml(ds, options.intent, options.sessionContext);
+    options.onComplete(mock);
+  }
+}
+
+/**
+ * Generates an exact design-locked subpage layout matching the existing site
+ */
+export function generateTransitionMockHtml(
+  ds: LockedDesignSystem,
+  intent: string,
+  sessionContext?: Record<string, any>
+): string {
+  const isDark = ds.colorScheme.backgroundClass.includes("950") || ds.colorScheme.backgroundClass.includes("900");
+  const cartItems = sessionContext?.cartItems || [
+    { id: "1", name: "Artisanal Selection", price: 38, qty: 1 },
+  ];
+  const total = cartItems.reduce((acc: number, item: any) => acc + item.price * (item.qty || 1), 0);
+
+  // 1. Checkout / Order Subpage
+  if (intent.includes("checkout") || intent.includes("order") || intent.includes("cart")) {
+    return `
+<div class="${ds.wrapperClasses}">
+  ${ds.headerHtml}
+
+  <main id="page-content" class="max-w-5xl mx-auto px-6 py-12 space-y-10 animate-fade-in">
+    <!-- Breadcrumb & Back -->
+    <div class="flex items-center justify-between border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-4">
+      <div class="flex items-center space-x-2 text-xs text-slate-400">
+        <a href="#/" data-action="navigate_home" data-target="#app-root" class="hover:underline">Home</a>
+        <span>/</span>
+        <span class="${isDark ? "text-slate-200" : "text-slate-800"} font-bold">Secure Checkout</span>
+      </div>
+      <span class="text-xs font-mono ${isDark ? "text-slate-400" : "text-slate-500"}">SSL 256-Bit Encrypted</span>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-10">
+      <!-- Checkout Form -->
+      <div class="lg:col-span-7 space-y-6">
+        <div class="${ds.colorScheme.cardClass} space-y-5">
+          <h2 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">1. Shipping & Delivery Address</h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+            <div class="space-y-1">
+              <label class="text-slate-400">First Name</label>
+              <input type="text" value="Jane" class="w-full px-3.5 py-2.5 rounded-xl ${isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-800"} border focus:outline-none" />
+            </div>
+            <div class="space-y-1">
+              <label class="text-slate-400">Last Name</label>
+              <input type="text" value="Doe" class="w-full px-3.5 py-2.5 rounded-xl ${isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-800"} border focus:outline-none" />
+            </div>
+            <div class="md:col-span-2 space-y-1">
+              <label class="text-slate-400">Street Address</label>
+              <input type="text" value="742 Evergreen Terrace" class="w-full px-3.5 py-2.5 rounded-xl ${isDark ? "bg-slate-900 border-slate-700 text-white" : "bg-slate-50 border-slate-200 text-slate-800"} border focus:outline-none" />
+            </div>
+          </div>
+        </div>
+
+        <div class="${ds.colorScheme.cardClass} space-y-5">
+          <h2 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">2. Payment Details</h2>
+          <div class="p-4 rounded-xl ${isDark ? "bg-slate-900/80 border border-slate-700" : "bg-slate-50 border border-slate-200"} flex items-center justify-between text-xs">
+            <div class="flex items-center space-x-2">
+              <span>💳</span>
+              <span class="font-bold">Card ending in 4242</span>
+            </div>
+            <span class="text-emerald-500 font-bold">Expires 12/28</span>
+          </div>
+          <button data-action="submit_order" data-target="#order-confirmation" class="w-full py-4 ${ds.colorScheme.primaryButtonClass} text-center shadow-lg transition active:scale-[0.99] flex items-center justify-center space-x-2">
+            <span>Place Order ($${total})</span>
+            <span>→</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Order Summary Card -->
+      <div class="lg:col-span-5">
+        <div id="order-confirmation" class="${ds.colorScheme.cardClass} space-y-6">
+          <div class="flex items-center justify-between border-b ${isDark ? "border-slate-800" : "border-slate-100"} pb-3">
+            <h3 class="font-bold text-base ${ds.colorScheme.fontFamilyClass}">Order Summary</h3>
+            <span class="text-xs px-2 py-0.5 rounded-full ${isDark ? "bg-slate-800 text-slate-300" : "bg-slate-100 text-slate-700"} font-mono">${cartItems.length} items</span>
+          </div>
+
+          <div class="space-y-3">
+            ${cartItems
+              .map(
+                (item: any) => `
+              <div class="flex justify-between items-center text-xs">
+                <div>
+                  <span class="font-medium block">${item.name}</span>
+                  <span class="text-slate-400">Qty: ${item.qty || 1}</span>
+                </div>
+                <span class="font-bold font-mono">$${item.price * (item.qty || 1)}</span>
+              </div>`
+              )
+              .join("")}
+          </div>
+
+          <div class="pt-4 border-t ${isDark ? "border-slate-800" : "border-slate-100"} space-y-2 text-xs">
+            <div class="flex justify-between text-slate-400">
+              <span>Standard Shipping</span>
+              <span class="text-emerald-500 font-bold">FREE</span>
+            </div>
+            <div class="flex justify-between text-base font-bold pt-2 border-t ${isDark ? "border-slate-800" : "border-slate-100"}">
+              <span>Total Due</span>
+              <span class="font-mono">$${total}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  ${ds.footerHtml || ""}
+</div>`.trim();
+  }
+
+  // 2. Default Navigation Subpage (Heritage, Teaware, Specs, About)
+  return `
+<div class="${ds.wrapperClasses}">
+  ${ds.headerHtml}
+
+  <main id="page-content" class="max-w-5xl mx-auto px-6 py-14 space-y-12 animate-fade-in">
+    <div class="border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-6">
+      <span class="text-xs font-semibold uppercase tracking-wider text-indigo-500">${ds.brandName} • Extended View</span>
+      <h1 class="text-3xl md:text-5xl font-bold ${ds.colorScheme.fontFamilyClass} mt-2 capitalize">${intent.replace("_", " ")}</h1>
+      <p class="text-slate-400 text-base mt-2 max-w-2xl leading-relaxed">
+        Adhering to our design identity with matching typography, color harmony, and dedicated components.
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+      <div class="${ds.colorScheme.cardClass} space-y-4">
+        <h3 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">Origin & Philosophy</h3>
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Every element is handcrafted to maintain aesthetic cohesion across user journeys, preserving navigation state and brand loyalty.
+        </p>
+        <button data-action="toggle_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs">
+          Open In-Memory Basket
+        </button>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} space-y-4">
+        <h3 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">Technical Specifications</h3>
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Zero external runtime drift. Unified Tailwind CSS utility tokens compiled on the fly with sub-150ms Jev reflex routing.
+        </p>
+        <a href="#/" data-action="navigate_home" data-target="#app-root" class="${ds.colorScheme.secondaryButtonClass} text-xs inline-block text-center">
+          ← Return to Main Page
+        </a>
+      </div>
+    </div>
+  </main>
+
+  ${ds.footerHtml || ""}
+</div>`.trim();
 }
 
 /**

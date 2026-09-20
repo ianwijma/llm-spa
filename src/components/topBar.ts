@@ -20,6 +20,7 @@ export interface TopBarCallbacks {
   onOpenSettings: () => void;
   onRegenerate: () => void;
   onOpenModelPicker: () => void;
+  onRegenerateWholeSite: () => void;
 }
 
 export class TopBar {
@@ -129,6 +130,17 @@ export class TopBar {
             <span class="text-slate-500 text-[9px]">▼</span>
           </button>
 
+          <!-- Regenerate Whole Site Button -->
+          <button
+            id="btn-regenerate-site"
+            type="button"
+            class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 active:scale-95 border border-slate-700 text-slate-200 rounded-lg text-xs font-medium transition flex items-center space-x-1.5 cursor-pointer group"
+            title="Regenerate whole site from scratch with a fresh layout & design"
+          >
+            <span class="group-hover:rotate-180 transition-transform duration-500">🔄</span>
+            <span class="hidden md:inline">Regenerate</span>
+          </button>
+
           <!-- Export HTML Button -->
           <button
             id="btn-export"
@@ -162,6 +174,7 @@ export class TopBar {
     const exportBtn = this.container.querySelector("#btn-export");
     const settingsBtn = this.container.querySelector("#btn-topbar-settings");
     const modelPickerBtn = this.container.querySelector("#topbar-model-picker-btn");
+    const regenerateSiteBtn = this.container.querySelector("#btn-regenerate-site");
 
     logoBtn?.addEventListener("click", () => this.callbacks.onGoHome());
     promptPill?.addEventListener("click", () => this.callbacks.onRegenerate());
@@ -170,5 +183,6 @@ export class TopBar {
     exportBtn?.addEventListener("click", () => this.callbacks.onExport());
     settingsBtn?.addEventListener("click", () => this.callbacks.onOpenSettings());
     modelPickerBtn?.addEventListener("click", () => this.callbacks.onOpenModelPicker());
+    regenerateSiteBtn?.addEventListener("click", () => this.callbacks.onRegenerateWholeSite());
   }
 }

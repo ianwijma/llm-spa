@@ -12,7 +12,13 @@ import { ModelPicker } from "./components/modelPicker";
 import { IframeSandbox } from "./runtime/iframeSandbox";
 import { StreamProcessor } from "./runtime/streamProcessor";
 import { runJevPreflight, runJevReflex, type InteractionPayload, type SiteContext } from "./services/typesafe";
-import { streamPageGeneration, generateComponentPatch, fetchOpenRouterModels } from "./services/openrouter";
+import {
+  streamPageGeneration,
+  generateComponentPatch,
+  fetchOpenRouterModels,
+  extractDesignSystemFromHtml,
+  streamPageTransition,
+} from "./services/openrouter";
 
 class HyperSiteApp {
   private landingContainer!: HTMLElement;
@@ -54,6 +60,7 @@ class HyperSiteApp {
       onOpenSettings: () => this.openSettings(),
       onRegenerate: () => this.handleRegeneratePrompt(),
       onOpenModelPicker: () => this.openModelPicker(),
+      onRegenerateWholeSite: () => this.handleRegenerateWholeSite(),
     });
 
     this.settingsModal = new SettingsModal(this.modalContainer, {
@@ -206,11 +213,16 @@ class HyperSiteApp {
         },
         onComplete: (fullHtml) => {
           this.streamProcessor.finalize();
-          store.setState({
+          const designSystem = extractDesignSystemFromHtml(fullHtml, trimmed, jevResult);
+          store.setState((prev) => ({
             isGenerating: false,
             currentHtml: fullHtml,
             statusMessage: "Generation complete",
-          });
+            session: {
+              ...prev.session,
+              lockedDesignSystem: designSystem,
+            },
+          }));
           store.pushHistory(`Generate: ${trimmed.slice(0, 30)}`, fullHtml);
           this.hideStatusOverlay();
         },
@@ -260,8 +272,20 @@ class HyperSiteApp {
       // Route execution according to Jev decision rubric
       switch (reflex.actionPathway) {
         case "local_toggle": {
-          // Declarative toggle (<15ms, 0 tokens)
-          this.sandbox.toggleClass(reflex.targetSelector, "hidden");
+          if (event.action === "navigate_home" || event.href === "#/" || event.href === "#") {
+            const first = store.getState().domHistory[0];
+            if (first) {
+              this.sandbox.replaceRootHtml(first.domSnapshot);
+              store.setState((prev) => ({
+                currentHtml: first.domSnapshot,
+                session: { ...prev.session, currentRoute: "#/" },
+              }));
+              store.pushHistory("Navigate: Home", first.domSnapshot);
+              this.showStatusOverlay("Returned to Homepage", false, 1500);
+            }
+          } else {
+            this.sandbox.toggleClass(reflex.targetSelector, "hidden");
+          }
           break;
         }
 
@@ -306,15 +330,9 @@ class HyperSiteApp {
         }
 
         case "full_page_transition": {
-          // Full page screen transition
-          const newRoute = reflex.mutationIntent.includes("checkout") ? "#/checkout" : "#/";
-          store.setState((prev) => ({
-            session: {
-              ...prev.session,
-              currentRoute: newRoute,
-            },
-          }));
-          await this.handleGenerateSite(`${state.prompt} - ${reflex.mutationIntent.replace("_", " ")}`);
+          // Full page screen transition with design system & shell lock
+          const newRoute = reflex.mutationIntent.includes("checkout") ? "#/checkout" : "#/" + reflex.mutationIntent;
+          await this.handlePageTransition(reflex.mutationIntent, newRoute);
           break;
         }
 
@@ -381,6 +399,64 @@ class HyperSiteApp {
     URL.revokeObjectURL(url);
 
     this.showStatusOverlay("💾 Standalone HTML Exported Successfully!", false, 2500);
+  }
+
+  private async handlePageTransition(targetIntent: string, newRoute: string): Promise<void> {
+    const state = store.getState();
+    const ds = state.session.lockedDesignSystem;
+
+    if (!ds) {
+      await this.handleGenerateSite(`${state.prompt} - ${targetIntent.replace("_", " ")}`);
+      return;
+    }
+
+    this.showStatusOverlay(`Navigating to ${targetIntent.replace("_", " ")} (Reusing ${ds.brandName} Design)...`, true);
+    store.setState({ isGenerating: true, statusMessage: "Transitioning page..." });
+    this.streamProcessor.reset();
+
+    await streamPageTransition({
+      model: state.selectedModel,
+      targetPage: targetIntent.replace("_", " "),
+      intent: targetIntent,
+      lockedDesignSystem: ds,
+      sessionContext: state.session.persistedData,
+      onToken: (token) => {
+        this.streamProcessor.appendToken(token);
+      },
+      onComplete: (newPageHtml) => {
+        this.streamProcessor.finalize();
+        store.setState((prev) => ({
+          isGenerating: false,
+          currentHtml: newPageHtml,
+          session: {
+            ...prev.session,
+            currentRoute: newRoute,
+          },
+        }));
+        store.pushHistory(`Navigate: ${targetIntent.replace("_", " ")}`, newPageHtml);
+        this.hideStatusOverlay();
+      },
+      onError: (err) => {
+        store.setState({ isGenerating: false });
+        this.showStatusOverlay(`⚠️ Navigation error: ${err.message}`, false, 3000);
+      },
+    });
+  }
+
+  private async handleRegenerateWholeSite(): Promise<void> {
+    const prompt = store.getState().prompt;
+    if (!prompt) return;
+
+    this.showStatusOverlay("🔄 Redesigning entire website from scratch...", true);
+    // Reset locked design system so a fresh design is synthesized
+    store.setState((prev) => ({
+      session: {
+        ...prev.session,
+        lockedDesignSystem: null,
+      },
+    }));
+
+    await this.handleGenerateSite(prompt);
   }
 
   private handleRegeneratePrompt(): void {

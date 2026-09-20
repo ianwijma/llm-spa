@@ -42,9 +42,29 @@ export interface CartItem {
   qty: number;
 }
 
+export interface LockedDesignSystem {
+  brandName: string;
+  brandTagline?: string;
+  brandIcon: string;
+  archetype: string;
+  theme: string;
+  headerHtml: string;
+  footerHtml?: string;
+  wrapperClasses: string;
+  colorScheme: {
+    backgroundClass: string;
+    textClass: string;
+    primaryButtonClass: string;
+    secondaryButtonClass: string;
+    cardClass: string;
+    fontFamilyClass: string;
+  };
+}
+
 export interface SessionData {
   originalPrompt: string;
   currentRoute: string;
+  lockedDesignSystem: LockedDesignSystem | null;
   designTokens: {
     archetype: string;
     theme: string;
@@ -108,6 +128,7 @@ const initialState: AppState = {
   session: {
     originalPrompt: "",
     currentRoute: "#/",
+    lockedDesignSystem: null,
     designTokens: {
       archetype: "saas_landing",
       theme: "modern_saas",
