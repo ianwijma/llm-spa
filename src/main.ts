@@ -88,25 +88,47 @@ class HyperSiteApp {
     });
 
     // Subscribe to Store updates
+    let prevSettingsOpen = false;
+    let prevModelPickerOpen = false;
+    let prevDebugModalOpen = false;
+
     store.subscribe((state) => {
       this.topBar.render();
       if (state.currentView === "landing") {
         this.landingView.updateModelAndMode();
       }
-      if (state.settingsOpen) {
-        this.settingsModal.render();
-      } else {
-        this.modalContainer.innerHTML = "";
+
+      // Settings Modal
+      if (state.settingsOpen !== prevSettingsOpen) {
+        if (state.settingsOpen) {
+          this.settingsModal.render();
+        } else {
+          this.modalContainer.innerHTML = "";
+        }
+        prevSettingsOpen = state.settingsOpen;
       }
-      if (state.isModelPickerOpen) {
-        this.modelPicker.render();
-      } else {
-        this.modelPickerContainer.innerHTML = "";
+
+      // Model Picker Modal
+      if (state.isModelPickerOpen !== prevModelPickerOpen) {
+        if (state.isModelPickerOpen) {
+          this.modelPicker.render();
+        } else {
+          this.modelPickerContainer.innerHTML = "";
+        }
+        prevModelPickerOpen = state.isModelPickerOpen;
       }
-      if (state.debugModalOpen) {
-        this.debugModal.render();
-      } else {
-        this.debugModalContainer.innerHTML = "";
+
+      // Diagnostics & Telemetry Modal
+      if (state.debugModalOpen !== prevDebugModalOpen) {
+        if (state.debugModalOpen) {
+          this.debugModal.render();
+        } else {
+          this.debugModalContainer.innerHTML = "";
+        }
+        prevDebugModalOpen = state.debugModalOpen;
+      } else if (state.debugModalOpen) {
+        // If already open, update content in place without re-rendering backdrop or modal window
+        this.debugModal.updateContentOnly();
       }
     });
 

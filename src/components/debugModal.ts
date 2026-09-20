@@ -89,19 +89,19 @@ export class DebugModal {
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
               <div class="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-0.5">
                 <span class="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Recorded Events</span>
-                <span class="text-lg font-black text-white font-mono block">${events.length}</span>
+                <span id="debug-stat-events" class="text-lg font-black text-white font-mono block">${events.length}</span>
               </div>
               <div class="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-0.5">
                 <span class="text-[10px] text-indigo-400 uppercase tracking-widest font-mono">Avg Jev Latency</span>
-                <span class="text-lg font-black text-indigo-300 font-mono block">${avgJevLatency > 0 ? `${avgJevLatency}ms` : "—"}</span>
+                <span id="debug-stat-latency" class="text-lg font-black text-indigo-300 font-mono block">${avgJevLatency > 0 ? `${avgJevLatency}ms` : "—"}</span>
               </div>
               <div class="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-0.5">
                 <span class="text-[10px] text-cyan-400 uppercase tracking-widest font-mono">Total Tokens</span>
-                <span class="text-lg font-black text-cyan-300 font-mono block">${totalTokens.toLocaleString()}</span>
+                <span id="debug-stat-tokens" class="text-lg font-black text-cyan-300 font-mono block">${totalTokens.toLocaleString()}</span>
               </div>
               <div class="p-3 rounded-2xl bg-slate-950/60 border border-slate-800/80 space-y-0.5">
                 <span class="text-[10px] text-slate-500 uppercase tracking-widest font-mono">Design Lock</span>
-                <span class="text-xs font-bold text-slate-200 truncate block mt-1">
+                <span id="debug-stat-lock" class="text-xs font-bold text-slate-200 truncate block mt-1">
                   ${ds ? `${ds.brandName} (${ds.theme})` : "Unlocked (Initial)"}
                 </span>
               </div>
@@ -160,6 +160,77 @@ export class DebugModal {
     `;
 
     this.bindEvents();
+  }
+
+  public updateContentOnly(): void {
+    const state = store.getState();
+    const events = state.telemetryEvents || [];
+    const totalTokens = state.totalTokensUsed || 0;
+
+    const jevLatencies = events
+      .filter((e) => (e.type === "reflex_routing" || e.type === "preflight") && e.latencyMs)
+      .map((e) => e.latencyMs as number);
+    const avgJevLatency =
+      jevLatencies.length > 0
+        ? Math.round(jevLatencies.reduce((a, b) => a + b, 0) / jevLatencies.length)
+        : 0;
+
+    // Update stat elements directly on DOM
+    const statEvents = this.container.querySelector("#debug-stat-events");
+    if (statEvents) statEvents.textContent = String(events.length);
+
+    const statLatency = this.container.querySelector("#debug-stat-latency");
+    if (statLatency) statLatency.textContent = avgJevLatency > 0 ? `${avgJevLatency}ms` : "—";
+
+    const statTokens = this.container.querySelector("#debug-stat-tokens");
+    if (statTokens) statTokens.textContent = totalTokens.toLocaleString();
+
+    const ds = state.session.lockedDesignSystem;
+    const statLock = this.container.querySelector("#debug-stat-lock");
+    if (statLock) {
+      statLock.textContent = ds ? `${ds.brandName} (${ds.theme})` : "Unlocked (Initial)";
+    }
+
+    // Update tab count
+    const allTab = this.container.querySelector("[data-filter='all']");
+    if (allTab) allTab.textContent = `All (${events.length})`;
+
+    this.updateTimelineList();
+  }
+
+  private updateTimelineList(): void {
+    const listEl = this.container.querySelector("#timeline-list");
+    if (!listEl) return;
+
+    const events = store.getState().telemetryEvents || [];
+    const filtered = this.getFilteredEvents(events);
+
+    if (filtered.length === 0) {
+      listEl.innerHTML = `
+        <div class="py-20 text-center space-y-3 text-slate-500 font-mono">
+          <span class="text-4xl block">⚡</span>
+          <p class="text-sm font-semibold text-slate-400">No events recorded matching this filter.</p>
+          <p class="text-xs">Interact with the generated site or type a prompt to record live telemetry.</p>
+        </div>
+      `;
+      return;
+    }
+
+    listEl.innerHTML = filtered.map((e) => this.renderEventCard(e)).join("");
+
+    // Rebind accordion toggles on cards
+    listEl.querySelectorAll(".card-toggle").forEach((toggle) => {
+      toggle.addEventListener("click", () => {
+        const id = toggle.getAttribute("data-id");
+        if (!id) return;
+        if (this.expandedEventIds.has(id)) {
+          this.expandedEventIds.delete(id);
+        } else {
+          this.expandedEventIds.add(id);
+        }
+        this.updateTimelineList();
+      });
+    });
   }
 
   private getFilteredEvents(events: TelemetryEvent[]): TelemetryEvent[] {
@@ -293,14 +364,25 @@ export class DebugModal {
 
     clearBtn?.addEventListener("click", () => {
       store.clearTelemetry();
-      this.render();
+      this.updateContentOnly();
     });
 
     filterTabs.forEach((tab) => {
       tab.addEventListener("click", () => {
         const f = tab.getAttribute("data-filter") || "all";
         this.activeFilter = f;
-        this.render();
+
+        // Update active class on filter tab buttons in place without touching the modal or backdrop
+        filterTabs.forEach((t) => {
+          const isSelected = (t.getAttribute("data-filter") || "all") === f;
+          if (isSelected) {
+            t.className = "filter-tab px-3 py-1.5 rounded-full font-mono text-xs transition whitespace-nowrap bg-indigo-600 text-white font-bold shadow-[0_0_15px_rgba(99,102,241,0.3)] cursor-pointer";
+          } else {
+            t.className = "filter-tab px-3 py-1.5 rounded-full font-mono text-xs transition whitespace-nowrap bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-750 cursor-pointer";
+          }
+        });
+
+        this.updateTimelineList();
       });
     });
 
@@ -313,7 +395,7 @@ export class DebugModal {
         } else {
           this.expandedEventIds.add(id);
         }
-        this.render();
+        this.updateTimelineList();
       });
     });
   }
