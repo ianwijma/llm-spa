@@ -265,6 +265,10 @@ export async function runJevReflex(
           open_item_details: "Render a detailed modal view of the selected item with ingredients and notes",
           apply_filter: "Filter visible items to match the chosen category tag",
           navigate_checkout: "Generate the checkout form with order summary and payment inputs",
+          navigate_about: "Render about us page detailing brand origin story, values, craftsmanship, and mission",
+          navigate_ceremony: "Render interactive step-by-step preparation ceremony guide and ritual",
+          navigate_catalog: "Render dedicated category showcase of offerings, specs, or hardware",
+          navigate_contact: "Render contact form, customer inquiry options, and address info",
           dismiss_overlay: "Hide active modal or close cart drawer",
         },
       },
@@ -444,24 +448,66 @@ function simulateJevReflex(
   let actionPathway: JevReflexResult["actionPathway"] = "local_toggle";
   let targetSelector = target || "#app-root";
   let mutationIntent = action || "toggle_view";
+  let targetPageTitle: string | undefined = undefined;
+  let contentHint: string | undefined = undefined;
 
   if (
     action.includes("add") ||
     text.includes("add to cart") ||
+    text.includes("add to basket") ||
     text.includes("buy") ||
     text.includes("order")
   ) {
     actionPathway = "partial_dom_patch";
     targetSelector = "#cart-drawer";
     mutationIntent = "add_item_to_cart";
+    contentHint = "Add item to order list and update cart counter badge.";
   } else if (
     text.includes("checkout") ||
     action.includes("checkout") ||
     text.includes("view cart")
   ) {
     actionPathway = "full_page_transition";
-    targetSelector = "#app-root";
+    targetSelector = "main, #page-content";
     mutationIntent = "navigate_checkout";
+    targetPageTitle = "Secure Checkout";
+    contentHint = "Generate the checkout form with shipping address, payment input fields, and itemized order summary.";
+  } else if (
+    text.includes("about") ||
+    text.includes("philosophy") ||
+    text.includes("story") ||
+    text.includes("heritage") ||
+    (event.href && (event.href.includes("about") || event.href.includes("philosophy")))
+  ) {
+    actionPathway = "full_page_transition";
+    targetSelector = "main, #page-content";
+    mutationIntent = "navigate_about";
+    targetPageTitle = event.text || "About Us & Heritage";
+    contentHint = `Generate the comprehensive About Us & Brand Heritage page for ${_siteContext.originalGoal || "the brand"}, detailing origin story, craftsmanship, values, and team.`;
+  } else if (
+    text.includes("ceremony") ||
+    text.includes("guide") ||
+    (event.href && event.href.includes("ceremony"))
+  ) {
+    actionPathway = "full_page_transition";
+    targetSelector = "main, #page-content";
+    mutationIntent = "navigate_ceremony";
+    targetPageTitle = event.text || "Ceremony Guide";
+    contentHint = "Generate an interactive step-by-step ceremony guide with preparation instructions, temperature notes, and whisking technique.";
+  } else if (
+    event.tagName === "A" &&
+    event.href &&
+    event.href.startsWith("#") &&
+    event.href !== "#" &&
+    event.href !== "#/"
+  ) {
+    // General internal subpage link from navbar
+    actionPathway = "full_page_transition";
+    targetSelector = "main, #page-content";
+    const cleanSlug = event.href.replace("#", "").toLowerCase();
+    mutationIntent = `navigate_${cleanSlug}`;
+    targetPageTitle = event.text || event.href.replace("#", "");
+    contentHint = `Generate the dedicated ${targetPageTitle} page with interactive cards, offerings, and detailed specifications.`;
   } else if (
     action.includes("filter") ||
     action.includes("category") ||
@@ -470,8 +516,9 @@ function simulateJevReflex(
     text.includes("popular")
   ) {
     actionPathway = "partial_dom_patch";
-    targetSelector = "#items-container";
+    targetSelector = "#items-container, #product-grid";
     mutationIntent = "apply_filter";
+    contentHint = `Filter visible cards to match ${event.text}.`;
   } else if (
     text.includes("close") ||
     action.includes("close") ||
@@ -502,6 +549,8 @@ function simulateJevReflex(
     actionPathway,
     targetSelector,
     mutationIntent,
+    targetPageTitle,
+    contentHint,
     latencyMs: duration,
     confidence: 0.94,
     summary: `${actionPathway} -> ${targetSelector}`,

@@ -428,7 +428,12 @@ export function extractDesignSystemFromHtml(
 
     const cardEl = doc.querySelector("div[id*='card'], div[id*='item'], div.rounded-2xl, div.rounded-3xl");
     if (cardEl && cardEl.getAttribute("class")) {
-      cardClass = cardEl.getAttribute("class") || cardClass;
+      const raw = cardEl.getAttribute("class") || "";
+      const cleaned = raw
+        .split(" ")
+        .filter((c) => !c.startsWith("flex") && !c.startsWith("justify-") && !c.startsWith("items-"))
+        .join(" ");
+      cardClass = cleaned || cardClass;
     }
   } else {
     // Regex fallback for non-DOM environments
@@ -472,6 +477,7 @@ export interface PageTransitionOptions {
   model: string;
   targetPage: string;
   intent: string;
+  contentHint?: string;
   lockedDesignSystem: LockedDesignSystem;
   sessionContext?: Record<string, any>;
   onToken: (token: string) => void;
@@ -490,7 +496,8 @@ export async function streamPageTransition(options: PageTransitionOptions): Prom
     const mockTransition = generateTransitionMockHtml(
       options.lockedDesignSystem,
       options.intent,
-      options.sessionContext
+      options.sessionContext,
+      options.contentHint
     );
     const chunkSize = 35;
     let accumulated = "";
@@ -500,7 +507,7 @@ export async function streamPageTransition(options: PageTransitionOptions): Prom
       options.onToken(chunk);
       await new Promise((r) => setTimeout(r, 10));
     }
-    options.onComplete(accumulated);
+    options.onComplete(mockTransition);
     return;
   }
 
@@ -510,6 +517,7 @@ export async function streamPageTransition(options: PageTransitionOptions): Prom
   const prompt = `
 Generate the <main id="page-content"> for page: "${options.targetPage}".
 Intent: ${options.intent}
+${options.contentHint ? `Content Focus Requirement: ${options.contentHint}` : ""}
 
 STRICT DESIGN SYSTEM LOCK (DO NOT DEVIATE):
 - Brand Name: ${ds.brandName}
@@ -536,7 +544,7 @@ Instructions:
         messages: [
           {
             role: "system",
-            content: "You are a precise frontend UI compiler. Generate only the matching <main id=\"page-content\"> content adhering strictly to the design system.",
+            content: `You are a precise frontend UI compiler. Generate only the matching <main id="page-content"> content adhering strictly to the design system of ${ds.brandName}.`,
           },
           { role: "user", content: prompt },
         ],
@@ -564,7 +572,7 @@ Instructions:
     options.onComplete(assembledHtml);
   } catch (err: any) {
     console.warn("Live page transition failed, using design-locked fallback:", err);
-    const mock = generateTransitionMockHtml(ds, options.intent, options.sessionContext);
+    const mock = generateTransitionMockHtml(ds, options.intent, options.sessionContext, options.contentHint);
     options.onComplete(mock);
   }
 }
@@ -575,7 +583,8 @@ Instructions:
 export function generateTransitionMockHtml(
   ds: LockedDesignSystem,
   intent: string,
-  sessionContext?: Record<string, any>
+  sessionContext?: Record<string, any>,
+  contentHint?: string
 ): string {
   const isDark = ds.colorScheme.backgroundClass.includes("950") || ds.colorScheme.backgroundClass.includes("900");
   const cartItems = sessionContext?.cartItems || [
@@ -584,7 +593,7 @@ export function generateTransitionMockHtml(
   const total = cartItems.reduce((acc: number, item: any) => acc + item.price * (item.qty || 1), 0);
 
   // 1. Checkout / Order Subpage
-  if (intent.includes("checkout") || intent.includes("order") || intent.includes("cart")) {
+  if (intent.includes("checkout") || intent.includes("order")) {
     return `
 <div class="${ds.wrapperClasses}">
   ${ds.headerHtml}
@@ -679,39 +688,206 @@ export function generateTransitionMockHtml(
 </div>`.trim();
   }
 
-  // 2. Default Navigation Subpage (Heritage, Teaware, Specs, About)
+  // 2. About Us / Philosophy / Heritage Page
+  if (intent.includes("about") || intent.includes("philosophy") || intent.includes("story") || intent.includes("heritage")) {
+    return `
+<div class="${ds.wrapperClasses}">
+  ${ds.headerHtml}
+
+  <main id="page-content" class="max-w-4xl mx-auto px-6 py-14 space-y-12 animate-fade-in">
+    <!-- Breadcrumb -->
+    <div class="flex items-center space-x-2 text-xs text-slate-400 border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-4">
+      <a href="#/" data-action="navigate_home" data-target="#app-root" class="hover:underline">Home</a>
+      <span>/</span>
+      <span class="${isDark ? "text-slate-200" : "text-slate-800"} font-bold">About Our Heritage</span>
+    </div>
+
+    <!-- Hero -->
+    <div class="space-y-4">
+      <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full ${isDark ? "bg-indigo-950/80 text-indigo-300 border border-indigo-500/30" : "bg-emerald-50 text-emerald-800 border border-emerald-200"} text-xs font-semibold">
+        <span>${ds.brandIcon}</span>
+        <span>The ${ds.brandName} Story</span>
+      </div>
+      <h1 class="text-4xl md:text-5xl font-bold ${ds.colorScheme.fontFamilyClass} tracking-tight">
+        Rooted in Craft. Devoted to Quality.
+      </h1>
+      <p class="text-slate-500 text-sm md:text-base leading-relaxed max-w-2xl font-normal">
+        Founded with a devotion to organic terroir, small-batch craftsmanship, and timeless aesthetics. Hand-selected harvest leaves prepared with reverence.
+      </p>
+    </div>
+
+    <!-- Core Pillars Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
+      <div class="${ds.colorScheme.cardClass} p-6 space-y-2.5 block">
+        <span class="text-3xl block">🌱</span>
+        <h3 class="text-base font-bold ${ds.colorScheme.fontFamilyClass}">Single-Origin Terroir</h3>
+        <p class="text-xs text-slate-500 leading-relaxed">Cultivated directly in mineral-rich soil under natural microclimates with zero industrial additives.</p>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} p-6 space-y-2.5 block">
+        <span class="text-3xl block">⚒️</span>
+        <h3 class="text-base font-bold ${ds.colorScheme.fontFamilyClass}">Artisanal Precision</h3>
+        <p class="text-xs text-slate-500 leading-relaxed">Processed in small batches using traditional stone milling and wood-fired techniques honed across generations.</p>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} p-6 space-y-2.5 block">
+        <span class="text-3xl block">🤝</span>
+        <h3 class="text-base font-bold ${ds.colorScheme.fontFamilyClass}">Direct Grower Trade</h3>
+        <p class="text-xs text-slate-500 leading-relaxed">100% fair compensation paid directly to multi-generation family farms and master potters.</p>
+      </div>
+    </div>
+
+    <div class="pt-6 border-t ${isDark ? "border-slate-800" : "border-slate-200"} flex items-center justify-between">
+      <a href="#/" data-action="navigate_home" data-target="#app-root" class="${ds.colorScheme.secondaryButtonClass} text-xs font-semibold inline-block">
+        ← Return to Main Page
+      </a>
+      <button data-action="toggle_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs font-semibold">
+        View Order Basket (${cartItems.length})
+      </button>
+    </div>
+  </main>
+
+  ${ds.footerHtml || ""}
+</div>`.trim();
+  }
+
+  // 3. Ceremony / Preparation Guide Page
+  if (intent.includes("ceremony") || intent.includes("guide")) {
+    return `
+<div class="${ds.wrapperClasses}">
+  ${ds.headerHtml}
+
+  <main id="page-content" class="max-w-4xl mx-auto px-6 py-14 space-y-12 animate-fade-in">
+    <!-- Breadcrumb -->
+    <div class="flex items-center space-x-2 text-xs text-slate-400 border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-4">
+      <a href="#/" data-action="navigate_home" data-target="#app-root" class="hover:underline">Home</a>
+      <span>/</span>
+      <span class="${isDark ? "text-slate-200" : "text-slate-800"} font-bold">Preparation & Ritual Guide</span>
+    </div>
+
+    <div class="space-y-4">
+      <span class="text-xs font-semibold uppercase tracking-wider text-emerald-600 font-mono">Mindful Preparation</span>
+      <h1 class="text-4xl md:text-5xl font-bold ${ds.colorScheme.fontFamilyClass} tracking-tight">The Art of the Whisk</h1>
+      <p class="text-slate-400 text-base max-w-2xl leading-relaxed">
+        ${contentHint || "Follow these four steps to aerate volatile aromatics and produce a silky, micro-foam crema."}
+      </p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div class="${ds.colorScheme.cardClass} space-y-2">
+        <span class="text-emerald-600 font-mono font-bold text-xs uppercase">Step 01 • Sift</span>
+        <h4 class="font-bold text-base ${ds.colorScheme.fontFamilyClass}">Sift 2g of Powder</h4>
+        <p class="text-xs text-slate-500 leading-relaxed">Use a fine stainless mesh sieve into a warm, dry chawan bowl to eliminate clumps.</p>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} space-y-2">
+        <span class="text-emerald-600 font-mono font-bold text-xs uppercase">Step 02 • Water Temp</span>
+        <h4 class="font-bold text-base ${ds.colorScheme.fontFamilyClass}">75°C to 80°C Water</h4>
+        <p class="text-xs text-slate-500 leading-relaxed">Pour 70ml of soft spring water cooled to 75°C. Never boiling water, which scorches sweet amino acids.</p>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} space-y-2">
+        <span class="text-emerald-600 font-mono font-bold text-xs uppercase">Step 03 • Whisk Motion</span>
+        <h4 class="font-bold text-base ${ds.colorScheme.fontFamilyClass}">Vigorous 'W' Motion</h4>
+        <p class="text-xs text-slate-500 leading-relaxed">Using a bamboo chasen whisk, flick your wrist in a rapid 'W' pattern for 20 seconds from the bottom up.</p>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} space-y-2">
+        <span class="text-emerald-600 font-mono font-bold text-xs uppercase">Step 04 • Sip in Stillness</span>
+        <h4 class="font-bold text-base ${ds.colorScheme.fontFamilyClass}">Enjoy Immediately</h4>
+        <p class="text-xs text-slate-500 leading-relaxed">Hold bowl with both hands and savor the rich umami mouthfeel within two minutes of whisking.</p>
+      </div>
+    </div>
+
+    <div class="pt-6 border-t ${isDark ? "border-slate-800" : "border-slate-200"} flex items-center justify-between">
+      <a href="#/" data-action="navigate_home" data-target="#app-root" class="${ds.colorScheme.secondaryButtonClass} text-xs font-semibold inline-block">
+        ← Return to Main Page
+      </a>
+      <button data-action="add_item_to_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs font-semibold">
+        Order Ceremonial Matcha Tin ($38)
+      </button>
+    </div>
+  </main>
+
+  ${ds.footerHtml || ""}
+</div>`.trim();
+  }
+
+  // 4. Dedicated Catalog / Teaware / Offerings Subpage
   return `
 <div class="${ds.wrapperClasses}">
   ${ds.headerHtml}
 
   <main id="page-content" class="max-w-5xl mx-auto px-6 py-14 space-y-12 animate-fade-in">
-    <div class="border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-6">
-      <span class="text-xs font-semibold uppercase tracking-wider text-indigo-500">${ds.brandName} • Extended View</span>
-      <h1 class="text-3xl md:text-5xl font-bold ${ds.colorScheme.fontFamilyClass} mt-2 capitalize">${intent.replace("_", " ")}</h1>
-      <p class="text-slate-400 text-base mt-2 max-w-2xl leading-relaxed">
-        Adhering to our design identity with matching typography, color harmony, and dedicated components.
-      </p>
+    <div class="border-b ${isDark ? "border-slate-800" : "border-slate-200"} pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+      <div>
+        <div class="flex items-center space-x-2 text-xs text-slate-400 mb-2">
+          <a href="#/" data-action="navigate_home" data-target="#app-root" class="hover:underline">Home</a>
+          <span>/</span>
+          <span class="${isDark ? "text-slate-200" : "text-slate-800"} font-bold capitalize">${intent.replace("navigate_", "").replace("_", " ")}</span>
+        </div>
+        <h1 class="text-3xl md:text-5xl font-bold ${ds.colorScheme.fontFamilyClass} tracking-tight capitalize">
+          ${ds.brandName} Collections
+        </h1>
+        <p class="text-slate-400 text-sm mt-2 max-w-xl">
+          ${contentHint || "Carefully curated seasonal harvest items, crafted with uncompromising standards."}
+        </p>
+      </div>
+      <button data-action="toggle_cart" data-target="#cart-drawer" class="${ds.colorScheme.secondaryButtonClass} text-xs font-semibold">
+        Open Cart (${cartItems.length})
+      </button>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-      <div class="${ds.colorScheme.cardClass} space-y-4">
-        <h3 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">Origin & Philosophy</h3>
-        <p class="text-xs text-slate-500 leading-relaxed">
-          Every element is handcrafted to maintain aesthetic cohesion across user journeys, preserving navigation state and brand loyalty.
-        </p>
-        <button data-action="toggle_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs">
-          Open In-Memory Basket
-        </button>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div class="${ds.colorScheme.cardClass} flex flex-col justify-between space-y-4">
+        <div>
+          <div class="h-44 rounded-xl ${isDark ? "bg-slate-900 border border-slate-800" : "bg-slate-100"} flex items-center justify-center text-4xl mb-4">
+            🍵
+          </div>
+          <span class="text-[10px] font-mono uppercase tracking-wider text-indigo-500 font-bold">Featured Reserve</span>
+          <h3 class="text-lg font-bold ${ds.colorScheme.fontFamilyClass} mt-1">Uji Premier Selection</h3>
+          <p class="text-xs text-slate-500 mt-1">First flush harvest picked by hand and stone ground on granite mills.</p>
+        </div>
+        <div class="pt-4 border-t ${isDark ? "border-slate-800" : "border-slate-100"} flex items-center justify-between">
+          <span class="font-bold text-base font-mono">$44</span>
+          <button data-action="add_item_to_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs">
+            + Add to Order
+          </button>
+        </div>
       </div>
 
-      <div class="${ds.colorScheme.cardClass} space-y-4">
-        <h3 class="text-xl font-bold ${ds.colorScheme.fontFamilyClass}">Technical Specifications</h3>
-        <p class="text-xs text-slate-500 leading-relaxed">
-          Zero external runtime drift. Unified Tailwind CSS utility tokens compiled on the fly with sub-150ms Jev reflex routing.
-        </p>
-        <a href="#/" data-action="navigate_home" data-target="#app-root" class="${ds.colorScheme.secondaryButtonClass} text-xs inline-block text-center">
-          ← Return to Main Page
-        </a>
+      <div class="${ds.colorScheme.cardClass} flex flex-col justify-between space-y-4">
+        <div>
+          <div class="h-44 rounded-xl ${isDark ? "bg-slate-900 border border-slate-800" : "bg-slate-100"} flex items-center justify-center text-4xl mb-4">
+            🏺
+          </div>
+          <span class="text-[10px] font-mono uppercase tracking-wider text-indigo-500 font-bold">Handmade Studio</span>
+          <h3 class="text-lg font-bold ${ds.colorScheme.fontFamilyClass} mt-1">Shigaraki Glazed Chawan</h3>
+          <p class="text-xs text-slate-500 mt-1">Hand-thrown stoneware bowl with natural wood-ash glaze.</p>
+        </div>
+        <div class="pt-4 border-t ${isDark ? "border-slate-800" : "border-slate-100"} flex items-center justify-between">
+          <span class="font-bold text-base font-mono">$78</span>
+          <button data-action="add_item_to_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs">
+            + Add to Order
+          </button>
+        </div>
+      </div>
+
+      <div class="${ds.colorScheme.cardClass} flex flex-col justify-between space-y-4">
+        <div>
+          <div class="h-44 rounded-xl ${isDark ? "bg-slate-900 border border-slate-800" : "bg-slate-100"} flex items-center justify-center text-4xl mb-4">
+            🎋
+          </div>
+          <span class="text-[10px] font-mono uppercase tracking-wider text-indigo-500 font-bold">Accessory</span>
+          <h3 class="text-lg font-bold ${ds.colorScheme.fontFamilyClass} mt-1">100-Prong Golden Chasen</h3>
+          <p class="text-xs text-slate-500 mt-1">Hand-carved single piece of seasoned bamboo for fine micro-froth.</p>
+        </div>
+        <div class="pt-4 border-t ${isDark ? "border-slate-800" : "border-slate-100"} flex items-center justify-between">
+          <span class="font-bold text-base font-mono">$28</span>
+          <button data-action="add_item_to_cart" data-target="#cart-drawer" class="${ds.colorScheme.primaryButtonClass} text-xs">
+            + Add to Order
+          </button>
+        </div>
       </div>
     </div>
   </main>

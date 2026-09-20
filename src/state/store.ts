@@ -29,6 +29,8 @@ export interface JevReflexResult {
   actionPathway: "local_toggle" | "partial_dom_patch" | "full_page_transition" | "external_link" | "inert_click" | "form_feedback";
   targetSelector: string;
   mutationIntent: string;
+  targetPageTitle?: string;
+  contentHint?: string;
   latencyMs: number;
   confidence: number;
   summary: string;

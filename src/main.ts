@@ -325,6 +325,15 @@ class HyperSiteApp {
   private async handleIframeUIEvent(event: InteractionPayload): Promise<void> {
     console.log("Captured UI_EVENT from Sandboxed Iframe:", event);
 
+    // Immediately show high-visibility action feedback with loader
+    const targetLabel = event.text ? `"${event.text.slice(0, 35)}"` : `<${event.tagName.toLowerCase()}>`;
+    this.showStatusOverlay(
+      `Action: ${targetLabel}`,
+      true,
+      0,
+      "TypeSafe Jev reflex evaluating intent..."
+    );
+
     const state = store.getState();
     store.setState({ isReflexEvaluating: true });
 
@@ -475,8 +484,13 @@ class HyperSiteApp {
 
         case "full_page_transition": {
           // Full page screen transition with design system & shell lock
-          const newRoute = reflex.mutationIntent.includes("checkout") ? "#/checkout" : "#/" + reflex.mutationIntent;
-          await this.handlePageTransition(reflex.mutationIntent, newRoute);
+          const newRoute = reflex.mutationIntent.includes("checkout") ? "#/checkout" : "#/" + reflex.mutationIntent.replace("navigate_", "");
+          await this.handlePageTransition(
+            reflex.mutationIntent,
+            newRoute,
+            reflex.targetPageTitle,
+            reflex.contentHint
+          );
           break;
         }
 
@@ -563,7 +577,12 @@ class HyperSiteApp {
     this.showStatusOverlay("💾 Standalone HTML Exported Successfully!", false, 2500);
   }
 
-  private async handlePageTransition(targetIntent: string, newRoute: string): Promise<void> {
+  private async handlePageTransition(
+    targetIntent: string,
+    newRoute: string,
+    targetTitle?: string,
+    contentHint?: string
+  ): Promise<void> {
     const state = store.getState();
     const ds = state.session.lockedDesignSystem;
 
@@ -572,14 +591,21 @@ class HyperSiteApp {
       return;
     }
 
-    this.showStatusOverlay(`Navigating to ${targetIntent.replace("_", " ")} (Reusing ${ds.brandName} Design)...`, true);
-    store.setState({ isGenerating: true, statusMessage: "Transitioning page..." });
+    const pageTitle = targetTitle || targetIntent.replace("navigate_", "").replace("_", " ");
+    this.showStatusOverlay(
+      `Navigating to ${pageTitle}`,
+      true,
+      0,
+      `Reusing ${ds.brandName} design system & layout shell...`
+    );
+    store.setState({ isGenerating: true, statusMessage: `Transitioning to ${pageTitle}...` });
     this.streamProcessor.reset();
 
     await streamPageTransition({
       model: state.selectedModel,
-      targetPage: targetIntent.replace("_", " "),
+      targetPage: pageTitle,
       intent: targetIntent,
+      contentHint,
       lockedDesignSystem: ds,
       sessionContext: state.session.persistedData,
       onToken: (token) => {
@@ -590,13 +616,14 @@ class HyperSiteApp {
         const tokens = Math.max(1, Math.round(newPageHtml.length / 4));
         store.recordTelemetry({
           type: "generation",
-          title: `Page Transition: ${targetIntent.replace("_", " ")}`,
+          title: `Page Transition: ${pageTitle}`,
           tokens,
           model: state.selectedModel,
-          summary: `Transitioned to "${targetIntent.replace("_", " ")}" (~${tokens} tokens) preserving ${ds.brandName} design system & layout shell`,
+          summary: `Transitioned to "${pageTitle}" (~${tokens} tokens) preserving ${ds.brandName} design system & layout shell`,
           details: {
-            targetIntent,
+            targetPage: pageTitle,
             route: newRoute,
+            contentHint,
             brandName: ds.brandName,
             theme: ds.theme,
             model: state.selectedModel,
@@ -612,12 +639,12 @@ class HyperSiteApp {
             currentRoute: newRoute,
           },
         }));
-        store.pushHistory(`Navigate: ${targetIntent.replace("_", " ")}`, newPageHtml);
-        this.hideStatusOverlay();
+        store.pushHistory(`Navigate: ${pageTitle}`, newPageHtml);
+        this.showStatusOverlay(`✓ Loaded ${pageTitle}`, false, 2000, `Preserved ${ds.brandName} navigation & styling`);
       },
       onError: (err) => {
         store.setState({ isGenerating: false });
-        this.showStatusOverlay(`⚠️ Navigation error: ${err.message}`, false, 3000);
+        this.showStatusOverlay(`⚠️ Navigation error: ${err.message}`, false, 3500);
       },
     });
   }
@@ -652,12 +679,24 @@ class HyperSiteApp {
     }
   }
 
-  private showStatusOverlay(text: string, isProgress = false, autoHideMs = 0): void {
+  private showStatusOverlay(text: string, isProgress = false, autoHideMs = 0, subtext = ""): void {
     this.statusOverlay.classList.remove("hidden");
     this.statusOverlay.innerHTML = `
-      <div class="px-4 py-2 rounded-full bg-slate-900/95 text-slate-100 shadow-2xl border border-slate-700/80 text-xs font-mono flex items-center space-x-2.5 backdrop-blur-md animate-slide-down">
-        ${isProgress ? '<span class="w-2.5 h-2.5 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin"></span>' : '<span class="text-indigo-400 font-bold">⚡</span>'}
-        <span>${text}</span>
+      <div class="px-5 py-3 rounded-2xl bg-slate-900/95 text-slate-100 shadow-2xl border border-indigo-500/50 text-xs font-mono flex items-center space-x-3.5 backdrop-blur-xl animate-slide-down pointer-events-auto ring-1 ring-indigo-500/20">
+        ${
+          isProgress
+            ? `<span class="relative flex h-3.5 w-3.5 flex-shrink-0">
+                 <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                 <span class="relative inline-flex rounded-full h-3.5 w-3.5 border-2 border-indigo-400 border-t-transparent animate-spin"></span>
+               </span>`
+            : `<span class="w-4 h-4 rounded-full bg-indigo-500/30 border border-indigo-400/40 flex items-center justify-center text-[10px] text-indigo-300 font-bold flex-shrink-0">⚡</span>`
+        }
+        <div class="space-y-0.5">
+          <div class="font-bold text-white text-xs tracking-wide">
+            ${text}
+          </div>
+          ${subtext ? `<div class="text-[11px] text-indigo-300/90 font-sans">${subtext}</div>` : ""}
+        </div>
       </div>
     `;
 
@@ -668,10 +707,14 @@ class HyperSiteApp {
     }
   }
 
-  private updateStatusOverlay(text: string): void {
-    const span = this.statusOverlay.querySelector("span:last-child");
-    if (span) {
-      span.textContent = text;
+  private updateStatusOverlay(text: string, subtext?: string): void {
+    const titleEl = this.statusOverlay.querySelector(".font-bold.text-white");
+    if (titleEl) {
+      titleEl.textContent = text;
+    }
+    if (subtext) {
+      const subEl = this.statusOverlay.querySelector(".font-sans");
+      if (subEl) subEl.textContent = subtext;
     }
   }
 
