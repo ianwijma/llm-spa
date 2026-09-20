@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HyperSite — AI-Native Dynamic Web Runtime</title>
+  <meta name="description" content="Purely client-side, zero-backend, AI-powered web runtime orchestrated by TypeSafe Jev and OpenRouter." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <!-- Dynamic Tailwind Play CDN for Host UI Chrome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="/src/styles/host.css" />
+</head>
+<body class="bg-slate-50 text-slate-900 overflow-hidden select-none">
+  <div id="app">
+    <!-- View 1: Google-Style Minimalist Landing Screen -->
+    <div id="landing-container"></div>
+
+    <!-- View 2: Generated Site Runtime Screen -->
+    <div id="runtime-container" class="hidden">
+      <!-- Top Bar Controls -->
+      <header id="topbar-container"></header>
+
+      <!-- Sandboxed Iframe Viewport -->
+      <main id="iframe-container"></main>
+    </div>
+
+    <!-- Live Intelligence / Streaming Status Overlay -->
+    <div id="status-overlay" class="hidden fixed top-20 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300"></div>
+
+    <!-- Settings Modal Root -->
+    <div id="modal-container"></div>
+
+    <!-- Searchable Model Picker Root -->
+    <div id="model-picker-container"></div>
+
+    <!-- Diagnostics & Telemetry Debug Modal Root -->
+    <div id="debug-modal-container"></div>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
